@@ -26,7 +26,7 @@
 struct NIpv4ll {
         /* context */
         unsigned long n_refs;
-        uint16_t enumeration;
+        struct drand48_data state;
 
         /* runtime */
         NAcd *acd;
@@ -92,8 +92,17 @@ _public_ void n_ipv4ll_get_mac(NIpv4ll *ll, struct ether_addr *macp) {
         n_acd_get_mac(ll->acd, macp);
 }
 
-_public_ void n_ipv4ll_get_ip(NIpv4ll *ll, struct in_addr *ipp) {
-        n_acd_get_ip(ll->acd, ipp);
+_public_ int n_ipv4ll_get_ip(NIpv4ll *ll, struct in_addr *ipp) {
+        struct in_addr ip;
+
+        n_acd_get_ip(ll->acd, &ip);
+
+        if (ip.s_addr == INADDR_ANY)
+                return -EADDRNOTAVAIL;
+
+        *ipp = ip;
+
+        return 0;
 }
 
 _public_ int n_ipv4ll_set_ifindex(NIpv4ll *ll, int ifindex) {
@@ -120,24 +129,19 @@ _public_ int n_ipv4ll_announce(NIpv4ll *ll) {
 
 static void n_ipv4ll_select_ip(NIpv4ll *ll, struct in_addr *ip) {
         for (;;) {
+                long int result;
                 uint16_t offset;
 
-                /*
-                 * Each possible enumeration value defines a different
-                 * enumeration of the subnet. We are guaranteed to visit each
-                 * address in the subnet exactly once, and that no two
-                 * enumeration values gives the same enumeration.
-                 */
-                offset = ll->n_iteration ^ ll->enumeration;
+                (void) mrand48_r(&ll->state, &result);
+
+                offset = result ^ (result >> 16);
 
                 /*
                  * The first and the last 256 addresses in the subnet are
                  * reserved.
                  */
-                if (offset < 0x100 || offset > 0xfdff) {
-                        ll->n_iteration ++;
+                if (offset < 0x100 || offset > 0xfdff)
                         continue;
-                }
 
                 ip->s_addr = htobe32(IPV4LL_NETWORK | offset);
                 break;
@@ -145,21 +149,12 @@ static void n_ipv4ll_select_ip(NIpv4ll *ll, struct in_addr *ip) {
 }
 
 _public_ int n_ipv4ll_set_enumeration(NIpv4ll *ll, uint64_t enumeration) {
-        struct in_addr ip;
-
         if (n_ipv4ll_is_running(ll))
                 return -EBUSY;
 
-        ll->enumeration = (enumeration >> 48) ^
-                          (enumeration >> 32) ^
-                          (enumeration >> 16) ^
-                          enumeration;
+        (void) seed48_r((unsigned short int*) &enumeration, &ll->state);
 
-        ll->n_iteration = 0;
-
-        n_ipv4ll_select_ip(ll, &ip);
-
-        return n_acd_set_ip(ll->acd, &ip);
+        return 0;
 }
 
 static void n_ipv4ll_handle_acd(NAcd *acd, void *userdata, unsigned int event, const struct ether_arp *conflict) {

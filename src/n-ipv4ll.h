@@ -5,7 +5,7 @@
  *
  * This is the public header of the n-ipv4ll library, implementing Dynamic IPv4
  * Link-Local Address Configuration as described in RFC-3927. This header
- * defines the public API and all entry points if n-ipv4ll.
+ * defines the public API and all entry points of n-ipv4ll.
  */
 
 #ifdef __cplusplus
@@ -37,7 +37,7 @@ bool n_ipv4ll_is_running(NIpv4ll *acd);
 void n_ipv4ll_get_fd(NIpv4ll *acd, int *fdp);
 void n_ipv4ll_get_ifindex(NIpv4ll *acd, int *ifindexp);
 void n_ipv4ll_get_mac(NIpv4ll *acd, struct ether_addr *macp);
-void n_ipv4ll_get_ip(NIpv4ll *acd, struct in_addr *ipp);
+int n_ipv4ll_get_ip(NIpv4ll *acd, struct in_addr *ipp);
 
 int n_ipv4ll_set_ifindex(NIpv4ll *acd, int ifindex);
 int n_ipv4ll_set_mac(NIpv4ll *acd, const struct ether_addr *mac);

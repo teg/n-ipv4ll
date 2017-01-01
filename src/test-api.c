@@ -53,8 +53,8 @@ static void test_api_configuration(void) {
         assert(ifindex == 1);
         n_ipv4ll_get_mac(ipv4ll, &mac);
         assert(!memcmp(mac.ether_addr_octet, (uint8_t[ETH_ALEN]){ 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54 }, ETH_ALEN));
-        n_ipv4ll_get_ip(ipv4ll, &ip);
-        assert(ip.s_addr == htobe32((169 << 24) | (254 << 16) | (1 << 8)));
+        r = n_ipv4ll_get_ip(ipv4ll, &ip);
+        assert(r == -EADDRNOTAVAIL);
 
         n_ipv4ll_unref(ipv4ll);
 }

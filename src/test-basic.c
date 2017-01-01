@@ -12,7 +12,7 @@ static void test_basic_fn(NIpv4ll *ll, void *userdata, unsigned int event, const
         bool *running = userdata;
 
         n_ipv4ll_get_ip(ll, &ip);
-        assert(ip.s_addr == htobe32((169 << 24) | (254 << 16) | (1 << 8) | 2));
+        assert(ip.s_addr == htobe32((169 << 24) | (254 << 16) | (148 << 8) | 109));
 
         assert(event == N_IPV4LL_EVENT_READY);
         *running = false;

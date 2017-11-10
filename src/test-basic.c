@@ -7,45 +7,43 @@
 #include <stdlib.h>
 #include "test.h"
 
-static void test_basic_fn(NIpv4ll *ll, void *userdata, unsigned int event, const struct ether_arp *conflict) {
-        struct in_addr ip;
-        bool *running = userdata;
-
-        n_ipv4ll_get_ip(ll, &ip);
-        assert(ip.s_addr == htobe32((169 << 24) | (254 << 16) | (148 << 8) | 109));
-
-        assert(event == N_IPV4LL_EVENT_READY);
-        *running = false;
-}
-
 static void test_basic(int ifindex, const struct ether_addr *mac) {
+        NIpv4llConfig config = {
+                .ifindex = ifindex,
+                .mac = *mac,
+        };
         struct pollfd pfds;
-        bool running;
         NIpv4ll *acd;
         int r, fd;
 
         r = n_ipv4ll_new(&acd);
         assert(r >= 0);
 
-        r = n_ipv4ll_set_ifindex(acd, ifindex);
-        assert(r >= 0);
-        r = n_ipv4ll_set_mac(acd, mac);
-        assert(r >= 0);
-
         n_ipv4ll_get_fd(acd, &fd);
-        r = n_ipv4ll_start(acd, test_basic_fn, &running);
+        r = n_ipv4ll_start(acd, &config);
         assert(r >= 0);
 
-        for (running = true; running; ) {
+        for (;;) {
+                NIpv4llEvent event;
                 pfds = (struct pollfd){ .fd = fd, .events = POLLIN };
                 r = poll(&pfds, 1, -1);
                 assert(r >= 0);
 
                 r = n_ipv4ll_dispatch(acd);
                 assert(r >= 0);
+
+                r = n_ipv4ll_pop_event(acd, &event);
+                if (r >= 0) {
+                        assert(event.event == N_IPV4LL_EVENT_READY);
+                        assert(event.ready.address.s_addr == htobe32((169 << 24) | (254 << 16) | (148 << 8) | 109));
+
+                        break;
+                } else {
+                        assert(r == -EAGAIN);
+                }
         }
 
-        n_ipv4ll_unref(acd);
+        n_ipv4ll_free(acd);
 }
 
 int main(int argc, char **argv) {

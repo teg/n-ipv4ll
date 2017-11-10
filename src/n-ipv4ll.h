@@ -12,14 +12,31 @@
 extern "C" {
 #endif
 
+#include <netinet/if_ether.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 
-struct ether_addr;
-struct ether_arp;
-struct in_addr;
-
 typedef struct NIpv4ll NIpv4ll;
-typedef void (*NIpv4llFn) (NIpv4ll *acd, void *userdata, unsigned int event, const struct ether_arp *conflict);
+
+typedef struct NIpv4llConfig {
+        unsigned int ifindex;
+        struct ether_addr mac;
+        uint64_t enumeration;
+} NIpv4llConfig;
+
+typedef struct NIpv4llEvent {
+        unsigned int event;
+        union {
+                struct {
+                        struct in_addr address;
+                } ready;
+                struct {
+                        struct ether_arp packet;
+                } defended, conflict;
+                struct {
+                } down;
+        };
+} NIpv4llEvent;
 
 enum {
         N_IPV4LL_EVENT_READY,
@@ -27,30 +44,24 @@ enum {
         N_IPV4LL_EVENT_CONFLICT,
         N_IPV4LL_EVENT_DOWN,
         _N_IPV4LL_EVENT_N,
+        _N_IPV4LL_EVENT_INVALID,
 };
 
-int n_ipv4ll_new(NIpv4ll **acdp);
-NIpv4ll *n_ipv4ll_ref(NIpv4ll *acd);
-NIpv4ll *n_ipv4ll_unref(NIpv4ll *acd);
+int n_ipv4ll_new(NIpv4ll **llp);
+NIpv4ll *n_ipv4ll_free(NIpv4ll *ll);
 
-bool n_ipv4ll_is_running(NIpv4ll *acd);
-void n_ipv4ll_get_fd(NIpv4ll *acd, int *fdp);
-void n_ipv4ll_get_ifindex(NIpv4ll *acd, int *ifindexp);
-void n_ipv4ll_get_mac(NIpv4ll *acd, struct ether_addr *macp);
-int n_ipv4ll_get_ip(NIpv4ll *acd, struct in_addr *ipp);
+void n_ipv4ll_get_fd(NIpv4ll *ll, int *fdp);
 
-int n_ipv4ll_set_ifindex(NIpv4ll *acd, int ifindex);
-int n_ipv4ll_set_mac(NIpv4ll *acd, const struct ether_addr *mac);
-int n_ipv4ll_set_enumeration(NIpv4ll *acd, uint64_t enumeration);
+int n_ipv4ll_dispatch(NIpv4ll *ll);
+int n_ipv4ll_pop_event(NIpv4ll *ll, NIpv4llEvent *eventp);
+int n_ipv4ll_announce(NIpv4ll *ll);
 
-int n_ipv4ll_dispatch(NIpv4ll *acd);
-int n_ipv4ll_start(NIpv4ll *acd, NIpv4llFn fn, void *userdata);
-void n_ipv4ll_stop(NIpv4ll *acd);
-int n_ipv4ll_announce(NIpv4ll *acd);
+int n_ipv4ll_start(NIpv4ll *ll, NIpv4llConfig *config);
+void n_ipv4ll_stop(NIpv4ll *ll);
 
-static inline void n_ipv4ll_unrefp(NIpv4ll **acd) {
-        if (*acd)
-                n_ipv4ll_unref(*acd);
+static inline void n_ipv4ll_freep(NIpv4ll **llp) {
+        if (*llp)
+                n_ipv4ll_free(*llp);
 }
 
 #ifdef __cplusplus

@@ -25,14 +25,14 @@
 
 struct NIpv4ll {
         /* context */
-        unsigned long n_refs;
         struct drand48_data state;
 
         /* runtime */
         NAcd *acd;
-        NIpv4llFn fn;
-        void *userdata;
-        uint16_t n_iteration;
+        NAcdConfig config;
+
+        /* pending event */
+        NIpv4llEvent event;
 };
 
 _public_ int n_ipv4ll_new(NIpv4ll **llp) {
@@ -43,88 +43,35 @@ _public_ int n_ipv4ll_new(NIpv4ll **llp) {
         if (!ll)
                 return -ENOMEM;
 
-        ll->n_refs = 1;
-
         r = n_acd_new(&ll->acd);
         if (r < 0)
                 goto error;
+
+        ll->event.event = _N_IPV4LL_EVENT_INVALID;
 
         *llp = ll;
         return 0;
 
 error:
-        n_ipv4ll_unref(ll);
+        n_ipv4ll_free(ll);
         return r;
 }
 
-_public_ NIpv4ll *n_ipv4ll_ref(NIpv4ll *ll) {
-        if (ll)
-                ++ll->n_refs;
-        return ll;
-}
-
-_public_ NIpv4ll *n_ipv4ll_unref(NIpv4ll *ll) {
-        if (!ll || --ll->n_refs)
+_public_ NIpv4ll *n_ipv4ll_free(NIpv4ll *ll) {
+        if (!ll)
                 return NULL;
 
         n_ipv4ll_stop(ll);
 
-        n_acd_unref(ll->acd);
+        n_acd_free(ll->acd);
 
         free(ll);
 
         return NULL;
 }
 
-_public_ bool n_ipv4ll_is_running(NIpv4ll *ll) {
-        return n_acd_is_running(ll->acd);
-}
-
 _public_ void n_ipv4ll_get_fd(NIpv4ll *ll, int *fdp) {
         n_acd_get_fd(ll->acd, fdp);
-}
-
-_public_ void n_ipv4ll_get_ifindex(NIpv4ll *ll, int *ifindexp) {
-        n_acd_get_ifindex(ll->acd, ifindexp);
-}
-
-_public_ void n_ipv4ll_get_mac(NIpv4ll *ll, struct ether_addr *macp) {
-        n_acd_get_mac(ll->acd, macp);
-}
-
-_public_ int n_ipv4ll_get_ip(NIpv4ll *ll, struct in_addr *ipp) {
-        struct in_addr ip;
-
-        n_acd_get_ip(ll->acd, &ip);
-
-        if (ip.s_addr == INADDR_ANY)
-                return -EADDRNOTAVAIL;
-
-        *ipp = ip;
-
-        return 0;
-}
-
-_public_ int n_ipv4ll_set_ifindex(NIpv4ll *ll, int ifindex) {
-        return n_acd_set_ifindex(ll->acd, ifindex);
-}
-
-_public_ int n_ipv4ll_set_mac(NIpv4ll *ll, const struct ether_addr *mac) {
-        return n_acd_set_mac(ll->acd, mac);
-}
-
-_public_ int n_ipv4ll_dispatch(NIpv4ll *ll) {
-        int r;
-
-        n_ipv4ll_ref(ll);
-        r = n_acd_dispatch(ll->acd);
-        n_ipv4ll_unref(ll);
-
-        return r;
-}
-
-_public_ int n_ipv4ll_announce(NIpv4ll *ll) {
-        return n_acd_announce(ll->acd, N_ACD_DEFEND_ONCE);
 }
 
 static void n_ipv4ll_select_ip(NIpv4ll *ll, struct in_addr *ip) {
@@ -148,82 +95,100 @@ static void n_ipv4ll_select_ip(NIpv4ll *ll, struct in_addr *ip) {
         }
 }
 
-_public_ int n_ipv4ll_set_enumeration(NIpv4ll *ll, uint64_t enumeration) {
-        if (n_ipv4ll_is_running(ll))
-                return -EBUSY;
-
-        (void) seed48_r((unsigned short int*) &enumeration, &ll->state);
-
-        return 0;
-}
-
-static void n_ipv4ll_handle_acd(NAcd *acd, void *userdata, unsigned int event, const struct ether_arp *conflict) {
-        NIpv4ll *ll = userdata;
-        struct in_addr ip;
+static void n_ipv4ll_handle_acd_event(NIpv4ll *ll, NAcdEvent *event) {
         int r;
 
-        switch (event) {
+        switch (event->event) {
         case N_ACD_EVENT_READY:
-                ll->fn(ll, ll->userdata, N_IPV4LL_EVENT_READY, NULL);
+                ll->event.event = N_IPV4LL_EVENT_READY;
+                ll->event.ready.address = ll->config.ip;
                 break;
 
         case N_ACD_EVENT_DEFENDED:
-                ll->fn(ll, ll->userdata, N_IPV4LL_EVENT_DEFENDED, conflict);
+                ll->event.event = N_IPV4LL_EVENT_DEFENDED;
+                ll->event.defended.packet = event->defended.packet;
                 break;
 
         case N_ACD_EVENT_CONFLICT:
-                ll->fn(ll, ll->userdata, N_IPV4LL_EVENT_CONFLICT, conflict);
+                ll->event.event = N_IPV4LL_EVENT_CONFLICT;
+                ll->event.conflict.packet = event->conflict.packet;
 
                 /* fall-through */
         case N_ACD_EVENT_USED:
-                ll->n_iteration ++;
-
                 n_acd_stop(ll->acd);
-                n_ipv4ll_select_ip(ll, &ip);
-                n_acd_set_ip(ll->acd, &ip);
-                r = n_acd_start(ll->acd, n_ipv4ll_handle_acd, ll);
+                n_ipv4ll_select_ip(ll, &ll->config.ip);
+                r = n_acd_start(ll->acd, &ll->config);
                 if (r >= 0)
                         return;
 
                 /*
                  * Failed to restart ACD. Give up and report the
-                 * failure to the caller. Fall-through.
+                 * failure to the caller.
                  */
+
+                /* fall-through */
         case N_ACD_EVENT_DOWN:
-                ll->fn(ll, ll->userdata, N_IPV4LL_EVENT_DOWN, NULL);
+                ll->event.event = N_IPV4LL_EVENT_DOWN;
                 break;
         }
 }
 
-_public_ int n_ipv4ll_start(NIpv4ll *ll, NIpv4llFn fn, void *userdata) {
-        struct in_addr ip;
+_public_ int n_ipv4ll_dispatch(NIpv4ll *ll) {
         int r;
 
-        if (!fn)
-                return -EINVAL;
-
-        ll->fn = fn;
-        ll->userdata = userdata;
-
-        n_ipv4ll_select_ip(ll, &ip);
-
-        r = n_acd_set_ip(ll->acd, &ip);
+        r =  n_acd_dispatch(ll->acd);
         if (r < 0)
-                goto error;
+                return r;
 
-        r = n_acd_start(ll->acd, n_ipv4ll_handle_acd, ll);
-        if (r < 0)
-                goto error;
+        for (;;) {
+                NAcdEvent event;
+
+                r = n_acd_pop_event(ll->acd, &event);
+                if (r == -EAGAIN)
+                        break;
+                else if (r < 0)
+                        return r;
+
+                n_ipv4ll_handle_acd_event(ll, &event);
+        }
 
         return 0;
+}
 
-error:
-        n_ipv4ll_stop(ll);
-        return r;
+_public_ int n_ipv4ll_pop_event(NIpv4ll *ll, NIpv4llEvent *eventp) {
+        if (ll->event.event == _N_IPV4LL_EVENT_INVALID)
+                return -EAGAIN;
+
+        *eventp = ll->event;
+        ll->event.event = _N_IPV4LL_EVENT_INVALID;
+
+        return 0;
+}
+
+_public_ int n_ipv4ll_announce(NIpv4ll *ll) {
+        return n_acd_announce(ll->acd, N_ACD_DEFEND_ONCE);
+}
+
+_public_ int n_ipv4ll_start(NIpv4ll *ll, NIpv4llConfig *config) {
+        NAcdConfig acd_config = {
+                .ifindex = config->ifindex,
+                .mac = config->mac,
+        };
+        int r;
+
+        (void) seed48_r((unsigned short int*) &config->enumeration, &ll->state);
+        n_ipv4ll_select_ip(ll, &acd_config.ip);
+
+        r = n_acd_start(ll->acd, &acd_config);
+        if (r < 0)
+                return r;
+
+        ll->config = acd_config;
+
+        return 0;
 }
 
 _public_ void n_ipv4ll_stop(NIpv4ll *ll) {
-        ll->userdata = NULL;
-        ll->fn = NULL;
         n_acd_stop(ll->acd);
+        ll->event.event = _N_IPV4LL_EVENT_INVALID;
 }
